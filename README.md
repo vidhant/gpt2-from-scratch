@@ -17,6 +17,20 @@
 3. Weight-splitting MHA is better at memory utilization than stacking multiple heads
 4. Vanishing gradients if we don't scale attention scores by square root of keys matrix.
 
+## Blog ideas
+
+* What is the semantic meaning of having residual connections?
+* How gradients flow across the model (including through the different transformer blocks) and how new information gets added at each layer.
+* Can we *see* what's flowing through the model or what it is "thinking"?
+* How does data flow through the transformer, in terms of the original input x?
+
+
+### TODO
+
+1. KV-Cache Optimization
+2. Speculative Decoding
+3. Model Quantization
+
 
 ## How to run
 
