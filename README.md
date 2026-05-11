@@ -1,4 +1,56 @@
-# llm-from-scratch
+# GPT 2.0 from Scratch
+
+This repository contains the implementation of a 124M parameter GPT architecture trained on 'The Verdict' by Edith Wharton.
+
+## Features
+- **Hardware-Agnostic:** Support for CUDA, MPS (Apple Silicon), and CPU.
+- **Efficient Data Loading:** Implemented a sliding window buffer with configurable stride (currently 256 for zero-overlap).
+- **Advanced Metrics:** Integrated Perplexity tracking ($e^{Loss}$) for better interpretability of model confidence.
+
+## Input Data
+
+* To make it possible to train the model on my personal Macbook Pro, I used a toy dataset - 'The Verdict' by Edith Wharton containing 5120 tokens. However, the same code should work for larger models as well (only that it'll take more time!)
+* The train-validation split was 90-10.
+
+## Model Architecture
+
+https://excalidraw.com/#json=kEtqwgDj8AgcazuEOskfg,y6R5g3fUyITXRsBLGTsqIQ
+
+
+* 
+
+## Key Params
+
+* 124M parameters
+* 12 transformer layers
+* 12 multi head attention modules within each transformer
+* GeLU activation for the Feed Forward Network
+* Context window: 256 tokens
+* Optimization: AdamW with a learning rate of 0.0004 and 0.1 weight decay.
+* Embedding dimension: 768
+* Stride: 256 (Zero-overlap for maximum data efficiency).
+* Tokenizer: Tiktoken (`tiktoken.get_encoding("gpt2")`)
+
+## Training Performance
+The model was trained for 10 epochs using the AdamW optimizer.
+
+It took 13 minutes on my 2019, 1.4 GHz Quad-Core Intel Core i5 Macbook Pro
+
+![](images/model-training-6.png)
+
+![](images/model-training-7.png)
+
+
+## Sample Output
+* **Prompt:** "Every effort moves you"
+* **Generated:** "Every effort moves you?" "Yes--quite insensible to the irony. She wanted him vindicated--and by me!"
+
+Yes, the generated output doesn't quite match up to a modern LLM, but:
+* the architecure follows the real GPT-2.0 closely
+* was trained on a much smaller dataset to make it possible on my personal macbook pro
+* is not instruction tuned
+
+---
 
 ## Attention Module
 
@@ -37,3 +89,11 @@
 ## How to run
 
 `uv run jupyter lab`
+
+## Acknowledgements
+
+Most of the core LLM implementation in this repo follows `Build a Large Language Model` by `Sebastian Raschka`.
+
+
+* Author: Vidhant Maini
+* Timeline: Late 2025 - Mid 2026
