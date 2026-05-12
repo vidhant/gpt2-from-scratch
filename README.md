@@ -62,14 +62,30 @@ Yes, the generated output doesn't quite match up to a modern LLM, but:
 Compared the inference time, with and without KV-caching, for a small 124M parameter GPT-2 model.
 
 ![](images/experiments-1.png)
-Observations:
-* For the standard method (non-KV cache): The time taken to generate each subsequent token increases linearly because the model must re-process the entire growing sequence (prompt + previously generated tokens) at every step. This leads to $O(n^2)$ complexity relative to the sequence length.
-* For the KV Cache method: The time to generate each token remains nearly constant. By storing and reusing the Key ($K$) and Value ($V$) tensors for past tokens, the model only needs to compute the $Q, K, V$ for the single new token, maintaining $O(n)$ complexity.
-* Theoretically, the performance gains from KV caching become more significant as the generation length increases
-* However, there is an anomaly based on our empirical evaluation - the performance gain from prompt=200, gen=50 tokens (8.94x) is more than the gain from prompt=50, gen=200 tokens (7.08x). Ideally, we would expect the opposite - as we generate more and more tokens, KV caching should shine more and more, however, in this case that is not the case. This is likely because of the per-step overhead in the decode step for things like: Python loop iteration, memory allocation for the growing KV cache, etc. KV-cache's FLOP cost per step is small, so the fixed overhead is a larger fraction of each step's total cost. This dilutes the speedup ratio when the number of generated tokens ($G$) is large.
 
-Downsides
-* The standard method is compute-bound (doing the same math over and over), whereas KV caching becomes memory-bandwidth bound (moving the stored cache from VRAM to the processor). Solution - Flash Attention, which I try next.
+**How it works:**
+* **Standard inference:** At every decode step $i$, the model re-processes the entire sequence of length $P + i$ through attention ($P$ = prompt length). Total cost across all $G$ steps: $\sum_{i=0}^{G-1}(P+i)^2$, i.e. $O(n^2)$.
+* **KV-Cache inference:** The prompt is processed once (prefill) and its $K$/$V$ tensors are stored. Each decode step processes only the 1 new token, attending over the growing cache. Total cost: $P^2 + \sum_{i=0}^{G-1}(P+i)$, i.e. $O(n)$.
+
+**What actually drives speedup?**
+
+Counterintuitively, `total_tokens = prompt_len + gen_len` is *not* the right predictor. The primary driver is **gen_len ($G$)**, because savings only accumulate during the $G$ decode steps — the prompt is processed once in both approaches and largely cancels in the ratio. Verified empirically:
+
+| Config (P, G) | Total tokens | Theoretical speedup |
+|---|---|---|
+| prompt=10, gen=50 | 60 | ~38x |
+| prompt=10, gen=200 | 210 | ~173x |
+| prompt=200, gen=50 | 250 | ~50x |
+| prompt=50, gen=200 | 250 | ~159x |
+
+Two configs with the same total tokens (250) differ by **3x** in speedup, purely because gen_len differs.
+
+**Theory vs. practice anomaly:**
+
+Empirically, `prompt=200, gen=50` showed *higher* speedup than `prompt=50, gen=200`, contradicting the theoretical prediction. Each KV-cache decode step carries a fixed per-step overhead (Python loop, PyTorch dispatch, memory allocation) independent of sequence length. With $G=200$ steps this overhead accumulates 4× more than with $G=50$. Since KV-cache's FLOP cost per step is small, the fixed overhead becomes a proportionally larger fraction — diluting the speedup when $G$ is large. This gap closes on GPUs with large models where compute dominates overhead.
+
+**Downsides:**
+* Standard inference is compute-bound. KV-caching shifts the bottleneck to **memory bandwidth** — the cache must be streamed from VRAM at every decode step. Flash Attention addresses helps with this, but since it's a CUDA kernel optimization, it provides no benefit on CPU.
 
 | Feature | Standard Inference | KV-Cache Inference |
 |---|---|---|
@@ -81,15 +97,40 @@ Downsides
 
 #### KV Cache costs Memory
 
-##### Theoretical size for the 124M param model
-Per token = `2 tensors (K+V) * 12 layers * 12 heads * 768/12 embedding dimension per head * 4 bytes per float = 72 KB / token`
+This is the core tradeoff: KV-caching exchanges memory (linear growth) for compute (avoiding quadratic recomputation).
 
-For full context (256 tokens) = `72KB * 256 = 18 MB (approx)`
+##### Theoretical size for the 124M param model
+
+Each layer stores K and V tensors of shape `(batch, n_heads, seq_len, head_dim)`. For a single new token:
+
+```
+bytes_per_token = 2 (K+V) × 12 (layers) × 12 (heads) × 64 (head_dim) × 4 (float32) = 73,728 bytes ≈ 72 KB
+```
+
+For full context (256 tokens) = `72 KB × 256 ≈ 18 MB`
 
 ![](images/experiments-2.png)
 
-* The KV cache is fully predictable
-* KV cache size grows linearly with sequence length, up to a maximum of `context_length` tokens.
+* The KV cache size is **fully predictable** — measured and theoretical lines overlap exactly.
+* Grows linearly with sequence length, capped at `context_length` tokens.
+* In production (e.g. 70B param model, float16, batch=32, 128K context), the KV cache can exceed hundreds of GB.
+
+<!-- TODO: add a plot showing projected cache size for larger models (7B, 70B) to make the scaling concrete -->
+
+<!-- TODO: Architecture Decisions section — explain WHY each choice was made:
+  - Pre-norm (LayerNorm before attention) vs post-norm: pre-norm stabilises training at depth
+  - GELU vs ReLU: GELU is smoother, empirically better for transformers
+  - Weight tying (out_head shares weights with token embedding): reduces params, regularises, aligns embedding/unembedding spaces
+  - No bias in QKV projections: reduces overfitting, common in modern LLMs
+  - AdamW over Adam: decoupled weight decay avoids L2-on-adaptive-lr interaction
+-->
+
+<!-- TODO: Sampling Strategies section — temperature, top-k, top-p:
+  - Temperature: scales logits before softmax — lower = more deterministic, higher = more random
+  - Top-k: truncate to k highest-probability tokens before sampling
+  - Top-p (nucleus): truncate to smallest set of tokens whose cumulative prob ≥ p
+  - Show how output quality changes across (temp=0.1, top_p=0.9) vs (temp=1.0, top_k=50)
+-->
 
 ## Attention Module
 
@@ -101,7 +142,25 @@ For full context (256 tokens) = `72KB * 256 = 18 MB (approx)`
 3. Next, I implemented **causal self-attention** so that only the preceeding and current tokens are given importance
 4. Finally, I implemented **Multi-head attention** using both, stacking and weight splits.
 
-### Experiments
+
+### 2. Speculative Decoding
+
+TODO
+
+### 3. Logit Lens
+
+TODO
+
+### 4. Visualizing Attention
+
+TODO
+
+
+### 5. PeFT
+
+TODO
+
+### 6. Other ideas
 
 1. Stacking multiple attention heads leads to a slower forward pass than weight-splitting them
 2. Increasing the number of attention heads reduces loss, converges faster (perhaps with a ceiling?)
@@ -122,9 +181,9 @@ For full context (256 tokens) = `72KB * 256 = 18 MB (approx)`
 
 1. KV-Cache Optimization
 2. Speculative Decoding
-3. Model Quantization
-4. Flash Attention
-5. LoRA
+3. LoRA
+4. Model Quantization
+5. Flash Attention
 
 
 ## How to run
