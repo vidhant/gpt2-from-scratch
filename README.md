@@ -2,6 +2,10 @@
 
 This repository contains the implementation of a 124M parameter GPT architecture trained on 'The Verdict' by Edith Wharton.
 
+
+* Author: Vidhant Maini
+* Timeline: Late 2025 - Mid 2026
+
 ## Features
 - **Hardware-Agnostic:** Support for CUDA, MPS (Apple Silicon), and CPU.
 - **Efficient Data Loading:** Implemented a sliding window buffer with configurable stride (currently 256 for zero-overlap).
@@ -49,6 +53,22 @@ Yes, the generated output doesn't quite match up to a modern LLM, but:
 * was trained on a much smaller dataset to make it possible on my personal macbook pro
 * is not instruction tuned
 
+## Experiments
+
+### 1. KV Caching
+
+Compared the inference time, with and without KV-caching, for a small 124M parameter GPT-2 model.
+
+There was almost a 5x speed-up when generating 100 tokens from a 5-token prompt.
+
+| Method    | Total Time | Tokens/Sec | Speedup |
+|------------|-------------|-------------|----------|
+| Standard   | 19.22s      | ~5.2 tps    | 1.0x     |
+| KV-Cache   | 3.97s       | ~25.1 tps   | 4.8x     |
+
+
+Downsides
+* The bottleneck moves from inference time to how fast we can move the KV cache around on the GPU. Solution - Flash Attention, which I try next
 ---
 
 ## Attention Module
@@ -83,6 +103,8 @@ Yes, the generated output doesn't quite match up to a modern LLM, but:
 1. KV-Cache Optimization
 2. Speculative Decoding
 3. Model Quantization
+4. Flash Attention
+5. LoRA
 
 
 ## How to run
@@ -93,6 +115,4 @@ Yes, the generated output doesn't quite match up to a modern LLM, but:
 
 Most of the core LLM implementation in this repo follows `Build a Large Language Model` by `Sebastian Raschka`.
 
-
-* Author: Vidhant Maini
-* Timeline: Late 2025 - Mid 2026
+> Raschka, Sebastian. Build A Large Language Model (From Scratch). Manning, 2024. ISBN: 978-1633437166.
