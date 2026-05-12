@@ -169,11 +169,25 @@ class MultiHeadAttention(torch.nn.Module):
         # Compute scaled dot-product attention (aka self-attention) with a causal mask
         attn_scores = queries @ keys.transpose(2, 3)  # Dot product for each head
 
-        # With KV-cache, keys are longer than queries (past + current tokens).
-        # Crop mask to (num_tokens rows, total_tokens cols) to match attn_scores and
-        # so that each query can attend to all past keys but not future ones.
+        # KV-CACHE MASK SLICING LOGIC:
+        # When decoding, 'keys' contains the entire history (past + current token),
+        # but 'queries' contains ONLY the current token(s) being processed.
+        #
+        # If we have 100 tokens in cache and are processing 1 new token:
+        # - Attention Scores (Q @ K.T) shape: (1, 101)
+        # (we compare the new token to all existing tokens)
+        # - Standard Mask shape: (1024, 1024)
+        #
+        # We must slice the mask to match the (1, 101) shape.
+        # We take the row corresponding to the token's absolute position (q_start)
+        # to ensure it only attends to itself and the 100 tokens behind it.
+        #
+        # In the decoding phase, num_tokens will mostly be 1 since we'll generate 1 token
+        # at a time.
+        # In the training phase, num_tokens will be the context length of the training data.
         total_tokens = keys.shape[2]
-        mask_bool = self.mask.bool()[:num_tokens, :total_tokens]
+        q_start = total_tokens - num_tokens
+        mask_bool = self.mask.bool()[q_start : q_start + num_tokens, :total_tokens]
 
         # Use the mask to fill attention scores
         attn_scores.masked_fill_(mask_bool, -torch.inf)
