@@ -1,22 +1,11 @@
 # GPT 2.0 from Scratch
 
-I trained a 124Mn parameter GPT-2 model from scratch on my 2019 Macbook Pro. In addition, I:
-* Implemented KV-caching and ran some experiments to unpack it's compute gains and memory costs
+I trained a 124M parameter GPT-2 model from scratch on my 2019, 1.4 GHz Quad-Core Intel Core i5 Macbook Pro. 
+
+Further, I:
+* Implemented KV-caching and ran some experiments to unpack its compute gains and memory costs
 * Implemented speculative decoding to understand its inference boost
 * Created a visualizer to showcase what the model was "thinking" at each step as it processed an input
-
-* Author: Vidhant Maini
-* Timeline: Late 2025 - Mid 2026
-
-## Features
-- **Hardware-Agnostic:** Support for CUDA, MPS (Apple Silicon), and CPU.
-- **Efficient Data Loading:** Implemented a sliding window buffer with configurable stride (currently 256 for zero-overlap).
-- **Advanced Metrics:** Integrated Perplexity tracking ($e^{Loss}$) for better interpretability of model confidence.
-
-## Input Data
-
-* To make it possible to train the model on my personal Macbook Pro, I used a toy dataset - 'The Verdict' by Edith Wharton containing 5120 tokens. However, the same code should work for larger models as well (only that it'll take more time!)
-* The train-validation split was 90-10.
 
 ## Model Architecture
 
@@ -35,6 +24,8 @@ https://excalidraw.com/#json=kEtqwgDj8AgcazuEOskfg,y6R5g3fUyITXRsBLGTsqIQ
 * Embedding dimension: 768
 * Stride: 256 (Zero-overlap for maximum data efficiency).
 * Tokenizer: Tiktoken (`tiktoken.get_encoding("gpt2")`)
+* Input Data: To make it possible to train the model on my personal Macbook Pro, I used a toy dataset - 'The Verdict' by Edith Wharton containing 5120 tokens. However, the same code should work for larger models as well (only that it'll take more time!)
+* Train-validation split: 90-10.
 
 ## Training Performance
 The model was trained for 10 epochs using the AdamW optimizer.
@@ -134,16 +125,6 @@ For full context (256 tokens) = `72 KB × 256 ≈ 18 MB`
   - Show how output quality changes across (temp=0.1, top_p=0.9) vs (temp=1.0, top_k=50)
 -->
 
-## Attention Module
-
-1. Implemented **simple self-attention** on a sample input
-    * Computed attention scores (Q@K.transpose)
-    * Computed attention weights using (softmax(attn_score/k_d**-0.5))
-    * Computed context vectors using attn_weights @ V
-2. Next, I implemented simple **self-attention with trainable weights**
-3. Next, I implemented **causal self-attention** so that only the preceeding and current tokens are given importance
-4. Finally, I implemented **Multi-head attention** using both, stacking and weight splits.
-
 
 ### 2. Speculative Decoding
 
@@ -192,8 +173,26 @@ TODO
 
 `uv run jupyter lab`
 
+## Other notes
+
+### Attention Module
+
+1. Implemented **simple self-attention** on a sample input
+    * Computed attention scores (Q@K.transpose)
+    * Computed attention weights using (softmax(attn_score/k_d**-0.5))
+    * Computed context vectors using attn_weights @ V
+2. Next, I implemented simple **self-attention with trainable weights**
+3. Next, I implemented **causal self-attention** so that only the preceeding and current tokens are given importance
+4. Finally, I implemented **Multi-head attention** using both, stacking and weight splits.
+
 ## Acknowledgements
 
 Most of the core LLM implementation in this repo follows `Build a Large Language Model` by `Sebastian Raschka`.
 
 > Raschka, Sebastian. Build A Large Language Model (From Scratch). Manning, 2024. ISBN: 978-1633437166.
+
+## Author
+
+Vidhant Maini
+
+2026
