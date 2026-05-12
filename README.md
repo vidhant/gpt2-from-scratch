@@ -1,7 +1,9 @@
 # GPT 2.0 from Scratch
 
-This repository contains the implementation of a 124M parameter GPT architecture trained on 'The Verdict' by Edith Wharton.
-
+I trained a 124Mn parameter GPT-2 model from scratch on my 2019 Macbook Pro. In addition, I:
+* Implemented KV-caching and ran some experiments to unpack it's compute gains and memory costs
+* Implemented speculative decoding to understand its inference boost
+* Created a visualizer to showcase what the model was "thinking" at each step as it processed an input
 
 * Author: Vidhant Maini
 * Timeline: Late 2025 - Mid 2026
