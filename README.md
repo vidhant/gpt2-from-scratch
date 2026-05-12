@@ -67,6 +67,10 @@ There was almost a 5x speed-up when generating 100 tokens from a 5-token prompt.
 | KV-Cache   | 3.97s       | ~25.1 tps   | 4.8x     |
 
 
+![](images/experiments-1.png)
+Observations:
+* In the non KV-cache method, the time to generate each token increases, whereas in the KV cache one, the time to generate each token remains the same
+
 Downsides
 * The bottleneck moves from inference time to how fast we can move the KV cache around on the GPU. Solution - Flash Attention, which I try next
 ---
