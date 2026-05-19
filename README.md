@@ -93,7 +93,7 @@ Two configs with the same total tokens (250) differ by **3x** in speedup, purely
 Empirically, `prompt=200, gen=50` showed *higher* speedup than `prompt=50, gen=200`, contradicting the theoretical prediction. Each KV-cache decode step carries a fixed per-step overhead (Python loop, PyTorch dispatch, memory allocation) independent of sequence length. With $G=200$ steps this overhead accumulates 4× more than with $G=50$. Since KV-cache's FLOP cost per step is small, the fixed overhead becomes a proportionally larger fraction — diluting the speedup when $G$ is large. This gap closes on GPUs with large models where compute dominates overhead.
 
 **Downsides:**
-* Standard inference is compute-bound. KV-caching shifts the bottleneck to **memory bandwidth** — the cache must be streamed from VRAM at every decode step. Flash Attention addresses helps with this, but since it's a CUDA kernel optimization, it provides no benefit on CPU.
+* Standard inference is compute-bound. KV-caching shifts the bottleneck to **memory bandwidth** — the cache must be streamed from VRAM at every decode step. **Flash Attention** helps with this, but since it's a CUDA kernel optimization, it provides no benefit on CPU.
 
 | Feature | Standard Inference | KV-Cache Inference |
 |---|---|---|
@@ -175,13 +175,60 @@ TODO
 * How does data flow through the transformer, in terms of the original input x?
 
 
+## Further Improvements
+
+### Flash Attention
+
+A rewrite of the attention kernel that achieves the same result as standard attention but uses memory proportional to sequence length rather than sequence length squared.
+
+**tl;dr**
+
+Standard attention writes the full $n \times n$ score matrix $S = QK^T$ to HBM, then reads it back for softmax, then reads it again to multiply by $V$. That matrix is the $O(n^2)$ memory — it has to live somewhere, and HBM (High Bandwidth Memory) is the only place big enough on the GPU to store this massive $O(n^2)$ matrix.
+
+Flash Attention processes in small tiles that fit in SRAM (Static Random-Access Memory). For each tile of $Q$, it loops over tiles of $K$ and $V$, computes a partial attention result, and accumulates it directly into the output — using an online softmax that updates a running max and normalisation factor as each $K$/$V$ tile arrives. The full $n \times n$ matrix is never assembled anywhere. Only the output $O$ (shape $n \times d$, i.e. $O(n)$) gets written back to HBM.
+
+So, now:
+* The attention computation is faster because the intermediate data (tiles of $Q$, $K$, $V$) is read from SRAM (10x faster than HBM) instead of HBM, eliminating the slow round-trips to HBM that standard attention requires.
+* The memory requirement goes down since the full $O(n^2)$ matrix is never assembled anywhere
+
+| | What lives in HBM | Peak memory |
+|---|---|---|
+| Standard | $n \times n$ score matrix + $n \times d$ output | $O(n^2)$ |
+| Flash Attention | $n \times d$ output only | $O(n)$ |
+
+**The problem it solves**
+
+Standard attention does this:
+1. Compute $S = QK^T$ — writes an $n \times n$ matrix to HBM (slow GPU memory)
+2. Compute $P = \text{softmax}(S)$ — reads that matrix back from HBM
+3. Compute $O = PV$ — reads it again
+
+For a 4096-token sequence, that's a 16M-element matrix sitting in HBM, getting read twice. The math itself is fast; the bottleneck is the IO — constantly shuffling data between slow HBM and the fast compute cores. This is what "memory bandwidth bound" actually means in practice, and it's why KV-caching (which also generates a lot of memory traffic) doesn't fully solve the problem.
+
+> **HBM vs SRAM:** HBM (High Bandwidth Memory) is the main memory on a GPU — what NVIDIA calls VRAM. Despite the name, it's "high bandwidth" only relative to system RAM; on the GPU itself it's the *slow* tier. SRAM is the small, fast on-chip cache sitting right next to the compute cores.
+>
+> | Memory | Size | Bandwidth |
+> |---|---|---|
+> | Registers | ~20 MB | ~50 TB/s |
+> | SRAM (shared memory) | ~20 MB | ~19 TB/s |
+> | HBM (VRAM) | 80 GB | ~2 TB/s |
+>
+> Flash Attention keeps the working set in SRAM (19 TB/s) instead of spilling to HBM (2 TB/s) — roughly a 10x bandwidth difference, which is where the wall-clock speedup actually comes from.
+
+**How it solves it**
+
+Flash Attention tiles $Q$, $K$, and $V$ into small blocks that fit in SRAM (fast on-chip memory, ~20MB on an A100 vs 80GB of HBM). It computes attention block by block, using an online softmax algorithm to accumulate the correct result without ever materialising the full $n \times n$ matrix. The output $O$ is the only thing written back to HBM. Peak memory drops from $O(n^2)$ to $O(n)$, and wall-clock speed improves because SRAM bandwidth is roughly 10x faster than HBM bandwidth.
+
+**How to implement it**
+
+* The easy version: swap `torch.nn.functional.scaled_dot_product_attention` into [attention.py](attention.py) in place of the manual `Q @ K.T → softmax → @ V` chain. PyTorch uses Flash Attention under the hood on CUDA automatically. 
+* The from-scratch version — requires writing a custom Triton or CUDA kernel that implements the tiled block computation. That's not something I've done here since this model runs on CPU (where Flash Attention provides no benefit; the memory hierarchy it exploits is GPU-specific).
+
 ### TODO
 
-1. KV-Cache Optimization
-2. Speculative Decoding
-3. LoRA
-4. Model Quantization
-5. Flash Attention
+1. Speculative Decoding
+2. LoRA
+3. Model Quantization
 
 
 ## How to run
