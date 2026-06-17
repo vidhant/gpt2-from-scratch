@@ -1,17 +1,15 @@
-# GPT 2.0 from Scratch
+# GPT-2: From Scratch to Optimized Inference (KV-Cache and Speculative Decoding)
 
-I trained a 124M parameter GPT-2 model from scratch on my 2019, 1.4 GHz Quad-Core Intel Core i5 Macbook Pro.
+I built a 124M-parameter GPT-2 from scratch in PyTorch (multi-head attention, causal masking, and pre-norm transformer blocks, all by hand). Then I went deep on making inference faster:
 
-Further, I:
-
-- Implemented KV-caching and ran experiments to unpack its compute gains and memory costs
-- Implemented speculative decoding to understand its inference boost
+- Implemented KV-caching and ran experiments to work out exactly what drives its compute gains and what it costs in memory.
+- Implemented speculative decoding (a 124M draft with a 355M target) and benchmarked where it speeds generation up and where it actually slows things down.
 
 ## Model Architecture
 
 ![](images/gpt-2-architecture.png)
 
-https://excalidraw.com/#json=kEtqwgDj8AgcazuEOskfg,y6R5g3fUyITXRsBLGTsqIQ
+[Full architecture diagram (Excalidraw)](https://excalidraw.com/#json=kEtqwgDj8AgcazuEOskfg,y6R5g3fUyITXRsBLGTsqIQ)
 
 ## Key Params
 
@@ -44,7 +42,7 @@ It took 13 minutes on my 2019, 1.4 GHz Quad-Core Intel Core i5 Macbook Pro
 
 Yes, the generated output doesn't quite match up to a modern LLM, but:
 
-- the architecure follows the real GPT-2.0 closely
+- the architecture follows the real GPT-2 closely
 - was trained on a much smaller dataset to make it possible on my personal macbook pro
 - is not instruction tuned
 
@@ -54,7 +52,7 @@ Yes, the generated output doesn't quite match up to a modern LLM, but:
 
 KV caching was the first optimization I dug into. Without it, every decode step re-runs attention over the entire sequence generated so far, which is a pile of repeated work that grows quadratically ($O(n^2)$) with length. KV caching stores each token's key and value the first time they're computed and reuses them, so every later step only has to process the single new token, turning the per-step cost from quadratic into linear ($O(n)$).
 
-Concretely, standard inference at decode step $i$ re-processes the whole length-$(P+i)$ sequence ($P$ = prompt length), for a total of $\sum_{i=0}^{G-1}(P+i)^2$ across $G$ generated tokens. With a KV cache the prompt is processed once during prefill, its $K$/$V$ are stored, and each of the $G$ steps attends over the growing cache while computing only the new token, for a total of $P^2 + \sum_{i=0}^{G-1}(P+i)$.
+Standard inference at decode step $i$ re-processes the whole length-$(P+i)$ sequence ($P$ = prompt length), for a total of $\sum_{i=0}^{G-1}(P+i)^2$ across $G$ generated tokens. With a KV cache the prompt is processed once during prefill, its $K$/$V$ are stored, and each of the $G$ steps attends over the growing cache while computing only the new token, for a total of $P^2 + \sum_{i=0}^{G-1}(P+i)$.
 
 #### Experiment
 
@@ -121,23 +119,6 @@ Over the full 256-token context that works out to `72 KB × 256 ≈ 18 MB`.
 - It grows linearly with sequence length, capped at `context_length` tokens.
 - This stays small for a 124M model, but it's the same mechanism that makes memory a real problem at scale: a 70B model at float16, batch 32, and 128K context pushes the KV cache into the hundreds of GB.
 
-<!-- TODO: add a plot showing projected cache size for larger models (7B, 70B) to make the scaling concrete -->
-
-<!-- TODO: Architecture Decisions section — explain WHY each choice was made:
-  - Pre-norm (LayerNorm before attention) vs post-norm: pre-norm stabilises training at depth
-  - GELU vs ReLU: GELU is smoother, empirically better for transformers
-  - Weight tying (out_head shares weights with token embedding): reduces params, regularises, aligns embedding/unembedding spaces
-  - No bias in QKV projections: reduces overfitting, common in modern LLMs
-  - AdamW over Adam: decoupled weight decay avoids L2-on-adaptive-lr interaction
--->
-
-<!-- TODO: Sampling Strategies section — temperature, top-k, top-p:
-  - Temperature: scales logits before softmax — lower = more deterministic, higher = more random
-  - Top-k: truncate to k highest-probability tokens before sampling
-  - Top-p (nucleus): truncate to smallest set of tokens whose cumulative prob ≥ p
-  - Show how output quality changes across (temp=0.1, top_p=0.9) vs (temp=1.0, top_k=50)
--->
-
 ### 2. Speculative Decoding
 
 As part of this project I went deep on speculative decoding, and it's easily one of my favorite LLM optimizations I've come across. It speeds up autoregressive generation by having a small, cheap _draft_ model guess several tokens ahead, then letting the big _target_ model check all of those guesses in a single forward pass instead of producing one token at a time. The clever bit is the accept/reject rule it uses to decide which guesses to keep. It's built so the final output has the exact same probability distribution as running the big model alone, which means the speedup comes for free with no drop in quality.
@@ -195,8 +176,8 @@ I generated 50 tokens from a long, grounded prompt and swept two knobs: the samp
 
 ## Further Work
 
-- Created a visualizer to showcase what the model was "thinking" at each step as it processed an input. Verify that "Reasoning" happens in the middle layers, while "Grammar" happens in the later layers.
-- Blog ideas
+- Build a visualizer that shows what the model is attending to at each step, and use it to test whether "reasoning" happens in the middle layers while "grammar" lives in the later ones.
+- Open questions I want to dig into
   - What is the semantic meaning of having residual connections?
   - How gradients flow across the model (including through the different transformer blocks) and how new information gets added at each layer.
   - Can we _see_ what's flowing through the model or what it is "thinking"?
@@ -208,7 +189,7 @@ I generated 50 tokens from a long, grounded prompt and swept two knobs: the samp
 
 ## Acknowledgements
 
-Most of the core LLM implementation in this repo follows `Build a Large Language Model` by `Sebastian Raschka`.
+The base GPT-2 model implementation follows `Build a Large Language Model (From Scratch)` by Sebastian Raschka. The experiments, benchmarks, and analysis in this README, along with the kv-caching and speculative-decoding implementations, are my own.
 
 > Raschka, Sebastian. Build A Large Language Model (From Scratch). Manning, 2024. ISBN: 978-1633437166.
 
