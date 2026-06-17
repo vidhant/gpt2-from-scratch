@@ -1,6 +1,6 @@
 # GPT-2: From Scratch to Optimized Inference (KV-Cache and Speculative Decoding)
 
-I built a 124M-parameter GPT-2 from scratch in PyTorch (multi-head attention, causal masking, and pre-norm transformer blocks, all by hand). Then I went deep on making inference faster:
+I built a 124M-parameter GPT-2 from scratch in PyTorch (multi-head attention, causal masking, and pre-norm transformer blocks, all by hand). To improve the baseline inference, I:
 
 - Implemented KV-caching and ran experiments to work out exactly what drives its compute gains and what it costs in memory.
 - Implemented speculative decoding (a 124M draft with a 355M target) and benchmarked where it speeds generation up and where it actually slows things down.
