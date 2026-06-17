@@ -143,7 +143,64 @@ For full context (256 tokens) = `72 KB × 256 ≈ 18 MB`
 
 ### 2. Speculative Decoding
 
-TODO
+As part of this project I went deep on speculative decoding, and it's easily one of my favorite LLM optimizations I've come across. It speeds up autoregressive generation by having a small, cheap *draft* model guess several tokens ahead, then letting the big *target* model check all of those guesses in a single forward pass instead of producing one token at a time. The clever bit is the accept/reject rule it uses to decide which guesses to keep. It's built so the final output has the exact same probability distribution as running the big model alone, which means the speedup comes for free with no drop in quality.
+
+#### Setup
+
+To measure the gains, I downloaded pretrained GPT-2 weights from OpenAI and loaded them into the same model architecture I'd built from scratch earlier in this project (with a bit of key remapping to match my layer names). I used GPT-2 small (124M) as the draft and GPT-2 medium (355M) as the target. Both are big enough to be meaningful, but small enough to sit in memory on my laptop at once.
+
+#### Experiment
+
+I generated 50 tokens from a long, grounded prompt and swept two knobs: the sampling temperature (0.0, 0.7, 1.0) and the lookahead K, i.e. how many tokens the draft guesses before each round of verification (2 through 6). For every combination I logged the acceptance rate, the number of target forward passes, and the wall-clock throughput, measured against a plain autoregressive run of the target model at the same temperature.
+
+#### Results
+
+| Temp | K | Acceptance | Target fwd passes | Tokens/sec | Speedup |
+|---|---|---|---|---|---|
+| 0.0 | 2 | 0.636 | 22 | 2.54 | 1.41× |
+| 0.0 | 3 | 0.544 | 19 | 2.38 | 1.32× |
+| 0.0 | 4 | 0.750 | 13 | 2.94 | 1.63× |
+| 0.0 | 5 | 0.488 | 16 | 2.06 | 1.14× |
+| 0.0 | 6 | **0.759** | **9** | **3.44** | **1.91×** |
+| 0.7 | 2 | 0.690 | 21 | 2.54 | 1.64× |
+| 0.7 | 3 | 0.611 | 18 | 2.50 | 1.61× |
+| 0.7 | 4 | 0.600 | 15 | 2.50 | 1.61× |
+| 0.7 | 5 | 0.435 | 17 | 1.67 | 1.08× |
+| 0.7 | 6 | 0.235 | 22 | 1.08 | 0.70× |
+| 1.0 | 2 | 0.462 | 26 | 1.54 | 0.84× |
+| 1.0 | 3 | 0.420 | 23 | 1.69 | 0.92× |
+| 1.0 | 4 | 0.413 | 20 | 1.68 | 0.92× |
+| 1.0 | 5 | 0.347 | 19 | 1.38 | 0.75× |
+| 1.0 | 6 | 0.203 | 23 | 1.18 | 0.64× |
+
+![](speculative_decoding_speedup.png)
+
+**Average speedup by temperature:**
+
+| Temp | Avg speedup |
+|---|---|
+| 0.0 | **1.48×** |
+| 0.7 | 1.33× |
+| 1.0 | **0.82× (net slowdown)** |
+
+#### Findings
+
+- **The speedup is real when the two models agree often, and that mostly happens at low temperature.** At T=0 it averaged 1.48x and peaked at 1.91x (K=6), where the draft's guesses were good enough that 50 tokens needed only 9 target forward passes instead of 50.
+- **It's a poor fit for creative, high-temperature generation.** At T=1.0 the acceptance rate fell to roughly 0.2 to 0.46 and speculative decoding was actually *slower* than the baseline (0.82x average). A higher temperature makes both models sample more randomly, so they agree less often, the draft's guesses get rejected, and all of that draft compute is wasted.
+- **A bigger lookahead K is not automatically better.** A large K only pays off when acceptance stays high. At T=0 a large K helped (K=6 was the fastest run), but at T=0.7 that same K=6 dropped to 0.70x, because every rejected guess throws away all K of the draft passes that produced it.
+- **The number of target forward passes tracked the speedup closely.** The target pass is the expensive step, so fewer of them means faster generation, and K=6 at T=0 cleared 50 tokens in just 9 passes. The catch is that a large K also adds draft passes, so there is a sweet spot rather than a 'bigger is better' rule.
+
+#### A gotcha at temperature 0
+
+This one took me a while to track down. At T=0 (greedy decoding) my speedups were terrible, and worse, the output didn't match what the target model produced on its own, which defeats the whole purpose. The problem was that I was feeding the full softmax distributions into the accept/reject check. At T=0 the draft still picks its top token, but its softmax probability for that token might only be 0.40, and if the target's probability is 0.35 then the check `p >= q` fails and the token gets sent to the random `p/q` roll, which sometimes rejects the exact token the target would have picked on its own.
+
+The fix was to feed one-hot distributions (1.0 on the chosen token, 0 everywhere else) at T=0. The check then becomes `1.0 >= 1.0`, which always passes, so a rejection only happens when the two models genuinely disagree on the top token. After that, greedy speculative output matched the plain target model exactly.
+
+#### Future improvements
+
+- **Average over many prompts.** Everything above comes from a single prompt, so the per-cell numbers are noisy. The K=5 dip at T=0, for instance, is probably just variance. Averaging over 20 to 30 prompts would give per-cell curves worth trusting; for now the per-temperature averages are the part I'd stand behind.
+- **Run it on a GPU.** These are CPU wall-clock numbers. The picture shifts with batching and a wider speed gap between the draft and target.
+- **Try instruction-tuned models.** They converge on more predictable text than base models, so the acceptance rate, and the speedup, should both go up.
 
 ### 3. Logit Lens
 
